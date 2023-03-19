@@ -3417,6 +3417,13 @@ namespace System
             ReadOnlySpan<char> separatorOrSeparators, ReadOnlySpan<string?> stringSeparators, bool isAny,
             StringSplitOptions options)
         {
+            if (isAny && !separatorOrSeparators.IsEmpty)
+            {
+                Debug.Assert(stringSeparators.IsEmpty);
+                return string.SplitToMemory(source, destination, separatorOrSeparators, default, default, options);
+            }
+            return string.SplitToMemory(source, destination, default, separatorOrSeparators, stringSeparators, options);
+            /* *
             // If the destination is empty, there's nothing to do.
             if (destination.IsEmpty)
             {
@@ -3546,6 +3553,7 @@ namespace System
 
             // Return how many ranges were written.
             return rangeCount;
+            /* */
         }
 
         /// <summary>Updates the starting and ending markers for a range to exclude whitespace.</summary>

@@ -10,7 +10,6 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
 using System.Text;
 
 namespace System
@@ -1494,13 +1493,15 @@ namespace System
             return SplitInternal(separator, count, options);
         }
 
+        //private static bool _useTodo;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private string[] SplitInternal(ReadOnlySpan<char> separators, int count, StringSplitOptions options)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(count);
-
             CheckStringSplitOptions(options);
-
-        ShortCircuit:
+            /*
+            //ShortCircuit:
             if (count <= 1 || Length == 0)
             {
                 // Per the method's documentation, we'll short-circuit the search for separators.
@@ -1514,6 +1515,25 @@ namespace System
                 options &= ~StringSplitOptions.TrimEntries;
             }
 
+            //if (count == int.MaxValue - 1) _useTodo = true;
+            */
+            return SplitWithOptionsToArray(options, separators, count);
+            /*
+            string[] result;
+            //if (_useTodo)
+            {
+                bool removeEmptyEntries = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+                bool trimEntry = (options & StringSplitOptions.TrimEntries) != 0;
+                result = (removeEmptyEntries, trimEntry) switch
+                {
+                    (true, true) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim>(this, separators, count),
+                    (false, true) => SplitWithOptions<SplitOptionUnset, SplitOptionTrim>(this, separators, count),
+                    (true, false) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset>(this, separators, count),
+                    (false, false) => SplitWithOptions<SplitOptionUnset, SplitOptionUnset>(this, separators, count)
+                };
+                return result;
+            }*/
+            /* *
             var sepListBuilder = new ValueListBuilder<int>(stackalloc int[StackallocIntBufferSizeLimit]);
 
             MakeSeparatorListAny(this, separators, ref sepListBuilder);
@@ -1526,13 +1546,13 @@ namespace System
                 goto ShortCircuit;
             }
 
-            string[] result = (options != StringSplitOptions.None)
+            result = (options != StringSplitOptions.None)
                 ? SplitWithPostProcessing(sepList, default, 1, count, options)
                 : SplitWithoutPostProcessing(sepList, default, 1, count);
 
             sepListBuilder.Dispose();
-
             return result;
+            /* */
         }
 
         public string[] Split(string? separator, StringSplitOptions options = StringSplitOptions.None)
@@ -1555,6 +1575,7 @@ namespace System
             return SplitInternal(null, separator, count, options);
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private string[] SplitInternal(string? separator, string?[]? separators, int count, StringSplitOptions options)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -1566,9 +1587,9 @@ namespace System
             if (!singleSeparator && (separators == null || separators.Length == 0))
             {
                 // split on whitespace
-                return SplitInternal(default(ReadOnlySpan<char>), count, options);
+                return SplitWithOptionsToArray(options, default(ReadOnlySpan<char>), count);
             }
-
+            /*
         ShortCircuit:
             if (count <= 1 || Length == 0)
             {
@@ -1586,10 +1607,28 @@ namespace System
                 }
                 else
                 {
-                    return SplitInternal(separator, count, options);
+                    return SplitWithOptionsToArray(options, separator, separators, count);
+                    //return SplitInternal(separator, count, options);
                 }
             }
-
+            */
+            return SplitWithOptionsToArray(options, separator ?? "", separators, count);
+            /*
+            string[] result;
+            //if (_useTodo)
+            {
+                bool removeEmptyEntries = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+                bool trimEntry = (options & StringSplitOptions.TrimEntries) != 0;
+                result = (removeEmptyEntries, trimEntry) switch
+                {
+                    (true, true) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim>(this, separators, count),
+                    (false, true) => SplitWithOptions<SplitOptionUnset, SplitOptionTrim>(this, separators, count),
+                    (true, false) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset>(this, separators, count),
+                    (false, false) => SplitWithOptions<SplitOptionUnset, SplitOptionUnset>(this, separators, count)
+                };
+                return result;
+            }*/
+            /* *
             var sepListBuilder = new ValueListBuilder<int>(stackalloc int[StackallocIntBufferSizeLimit]);
             var lengthListBuilder = new ValueListBuilder<int>(stackalloc int[StackallocIntBufferSizeLimit]);
 
@@ -1611,6 +1650,7 @@ namespace System
             lengthListBuilder.Dispose();
 
             return result;
+            /* */
         }
 
         private string[] CreateSplitArrayOfThisAsSoleValue(StringSplitOptions options, int count)
@@ -1692,6 +1732,594 @@ namespace System
             return splitStrings;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private string[] SplitWithOptionsToArray(StringSplitOptions options, ReadOnlySpan<char> separators, int count)
+        {
+            if (count == 0) return Array.Empty<string>();
+            bool removeEmptyEntries = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+            bool trimEntry = (options & StringSplitOptions.TrimEntries) != 0;
+            if (Length == 0) return removeEmptyEntries ? Array.Empty<string>() : new string[] { "" };
+
+            Debug.Assert(count >= 1);
+            // TODO omezit count/buffersize/length?
+            Span<Range> buffer = stackalloc Range[StackallocIntBufferSizeLimit];
+
+            var builder = new ValueRangeListBuilder(buffer);
+            SplitByCharactersOrWhitespace(this, separators, count, ref builder, removeEmptyEntries, trimEntry);
+            return CreateSplitArray(ref builder);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private string[] SplitWithOptionsToArray(StringSplitOptions options, string separator, ReadOnlySpan<string?> separators, int count)
+        {
+            if (count == 0) return Array.Empty<string>();
+            bool removeEmptyEntries = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+            bool trimEntry = (options & StringSplitOptions.TrimEntries) != 0;
+            if (Length == 0) return removeEmptyEntries ? Array.Empty<string>() : new string[] { "" };
+
+            Debug.Assert(count >= 1);
+            // TODO omezit count/buffersize/length?
+            Span<Range> buffer = stackalloc Range[StackallocIntBufferSizeLimit];
+            var builder = new ValueRangeListBuilder(buffer);
+            SplitByStrings(this, separator, separators, count, ref builder, removeEmptyEntries, trimEntry);
+            return CreateSplitArray(ref builder);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private string[] CreateSplitArray(ref ValueRangeListBuilder builder)
+        {
+            ReadOnlySpan<Range> ranges = builder.GetRanges();
+            string[] result;
+            if (ranges.Length == 1)
+            {
+                Range range = ranges[0];
+                if (range.Start.Value == 0 && range.End.Value == Length)
+                {
+                    result = new string[] { this };
+                }
+                else
+                {
+                    result = new string[] { new string(this[range]) };
+                }
+            }
+            else
+            {
+                ReadOnlySpan<char> span = this.AsSpan();
+                result = new string[ranges.Length];
+                int i = 0;
+                foreach (Range range in ranges)
+                {
+                    result[i] = new string(span[range]);
+                    i++;
+                }
+                builder.Dispose();
+            }
+            return result;
+        }
+
+        internal static int SplitToMemory(ReadOnlySpan<char> source, Span<Range> destination, ReadOnlySpan<char> charSeparators, ReadOnlySpan<char> singleSeparator, ReadOnlySpan<string?> stringSeparators, StringSplitOptions options)
+        {
+            int count = destination.Length;
+            if (count <= 0) return 0;
+            bool removeEmptyEntries = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+            bool trimEntry = (options & StringSplitOptions.TrimEntries) != 0;
+            if (source.Length == 0)
+            {
+                if (removeEmptyEntries)
+                {
+                    return 0;
+                }
+                destination[0] = default;
+                return 1;
+            }
+
+            var builder = new ValueRangeListBuilder(destination);
+            if (!charSeparators.IsEmpty || (singleSeparator.IsEmpty && stringSeparators.IsEmpty))
+            {
+                Debug.Assert(singleSeparator.IsEmpty && stringSeparators.IsEmpty);
+                SplitByCharactersOrWhitespace(source, charSeparators, count, ref builder, removeEmptyEntries, trimEntry);
+            }
+            else
+            {
+                SplitByStrings(source, singleSeparator, stringSeparators, count, ref builder, removeEmptyEntries, trimEntry);
+            }
+            return builder.GetRanges().Length;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SplitByCharactersOrWhitespace(ReadOnlySpan<char> source, ReadOnlySpan<char> separators, int count, ref ValueRangeListBuilder builder, bool removeEmptyEntries, bool trimEntry)
+        {
+            if (count != int.MaxValue)
+            {
+                if (removeEmptyEntries)
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim, SplitOptionHasCount>(source, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset, SplitOptionHasCount>(source, separators, count, ref builder);
+                    }
+                }
+                else
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionTrim, SplitOptionHasCount>(source, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionUnset, SplitOptionHasCount>(source, separators, count, ref builder);
+                    }
+                }
+            }
+            else
+            {
+                if (removeEmptyEntries)
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim, SplitOptionUnset>(source, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset, SplitOptionUnset>(source, separators, count, ref builder);
+                    }
+                }
+                else
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionTrim, SplitOptionUnset>(source, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionUnset, SplitOptionUnset>(source, separators, count, ref builder);
+                    }
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SplitByStrings(ReadOnlySpan<char> source, ReadOnlySpan<char> separator, ReadOnlySpan<string?> separators, int count, ref ValueRangeListBuilder builder, bool removeEmptyEntries, bool trimEntry)
+        {
+            if (count != int.MaxValue)
+            {
+                if (removeEmptyEntries)
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim, SplitOptionHasCount>(source, separator, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset, SplitOptionHasCount>(source, separator, separators, count, ref builder);
+                    }
+                }
+                else
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionTrim, SplitOptionHasCount>(source, separator, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionUnset, SplitOptionHasCount>(source, separator, separators, count, ref builder);
+                    }
+                }
+            }
+            else
+            {
+                if (removeEmptyEntries)
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim, SplitOptionUnset>(source, separator, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset, SplitOptionUnset>(source, separator, separators, count, ref builder);
+                    }
+                }
+                else
+                {
+                    if (trimEntry)
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionTrim, SplitOptionUnset>(source, separator, separators, count, ref builder);
+                    }
+                    else
+                    {
+                        SplitWithOptions<SplitOptionUnset, SplitOptionUnset, SplitOptionUnset>(source, separator, separators, count, ref builder);
+                    }
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void SplitWithOptions<TRemoveEmpty, TTrim, THasCount>(ReadOnlySpan<char> source, ReadOnlySpan<char> separators, int count, ref ValueRangeListBuilder builder)
+            where TRemoveEmpty : ISplitOptionRemoveEmpty
+            where TTrim : ISplitOptionTrim
+            where THasCount : ISplitOptionHasCount
+        {
+            var substrings = new ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount>(source, count);
+            SplitWithOptions(source, separators, ref substrings, ref builder);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void SplitWithOptions<TRemoveEmpty, TTrim, THasCount>(ReadOnlySpan<char> source, ReadOnlySpan<char> singleSeparator, ReadOnlySpan<string?> separators, int count, ref ValueRangeListBuilder builder)
+            where TRemoveEmpty : ISplitOptionRemoveEmpty
+            where TTrim : ISplitOptionTrim
+            where THasCount : ISplitOptionHasCount
+        {
+            var substrings = new ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount>(source, count);
+            SplitWithOptions(source, singleSeparator, separators, ref substrings, ref builder);
+        }
+
+        //private static TResult SplitWithOptions<TRemoveEmpty, TTrim, TResult>(ReadOnlySpan<char> source, ReadOnlySpan<char> separators, int count, Span</*(int Begin, int End)*/Range> buffer, string? thisString, SplitResultProcessor<TResult> processResult)
+        //    where TRemoveEmpty : ISplitOptionRemoveEmpty
+        //    where TTrim : ISplitOptionTrim
+        //{
+        //    var substrings = new ValueRangeListBuilder<TRemoveEmpty, TTrim>(source, count, buffer);
+        //    SplitWithOptions(source, separators, ref substrings);
+        //    TResult result = processResult(substrings.AsSpan(), thisString);
+        //    substrings.Dispose();
+        //    return result;
+        //}
+
+        //private string[] SplitWithOptions<TRemoveEmpty, TTrim>(ReadOnlySpan<char> source, ReadOnlySpan<char> separators, int count, Span</*(int Begin, int End)*/Range> buffer)
+        //    where TRemoveEmpty : ISplitOptionRemoveEmpty
+        //    where TTrim : ISplitOptionTrim
+        //{
+        //    //if (count == 0) return Array.Empty<string>();
+        //    //if (source.Length == 0) return TRemoveEmpty.IsSet ? Array.Empty<string>() : new string[] { "" };
+        //
+        //    //Debug.Assert(count >= 1);
+        //    //// TODO omezit count/buffersize/length?
+        //    //Span<ValueTuple<int, int>> buffer = stackalloc ValueTuple<int, int>[StackallocIntBufferSizeLimit];
+        //    var substrings = new ValueRangeListBuilder<TRemoveEmpty, TTrim>(source, count, buffer);
+        //
+        //    SplitWithOptions(source, separators, ref substrings);
+        //    return CreateSplitArray(source, ref substrings);
+        //}
+
+        //private static TResult SplitWithOptions<TRemoveEmpty, TTrim, TResult>(ReadOnlySpan<char> source, ReadOnlySpan<char> singleSeparator, ReadOnlySpan<string?> separators, int count, Span</*(int Begin, int End)*/Range> buffer, string? thisString, SplitResultProcessor<TResult> processResult)
+        //    where TRemoveEmpty : ISplitOptionRemoveEmpty
+        //    where TTrim : ISplitOptionTrim
+        //{
+        //    var substrings = new ValueRangeListBuilder<TRemoveEmpty, TTrim>(source, count, buffer);
+        //
+        //    SplitWithOptions(source, singleSeparator, separators, ref substrings);
+        //    TResult result = processResult(substrings.AsSpan(), thisString);
+        //    substrings.Dispose();
+        //    return result;
+        //}
+        /*
+        internal static int SplitToMemory(ReadOnlySpan<char> source, Span<Range> destination, ReadOnlySpan<char> charSeparators, ReadOnlySpan<char> singleSeparator, ReadOnlySpan<string?> stringSeparators, StringSplitOptions options)
+        {
+            int count = destination.Length;
+            if (count <= 0) return 0;
+            bool removeEmptyEntries = (options & StringSplitOptions.RemoveEmptyEntries) != 0;
+            bool trimEntry = (options & StringSplitOptions.TrimEntries) != 0;
+            if (source.Length == 0)
+            {
+                if (removeEmptyEntries)
+                {
+                    return 0;
+                }
+                destination[0] = default;
+                return 1;
+            }
+
+            if (!charSeparators.IsEmpty || (singleSeparator.IsEmpty && stringSeparators.IsEmpty))
+            {
+                Debug.Assert(singleSeparator.IsEmpty && stringSeparators.IsEmpty);
+                return (removeEmptyEntries, trimEntry) switch
+                {
+                    (true, true) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim, int>(source, charSeparators, count, destination, null, MemorySplitResultProcessor),
+                    (false, true) => SplitWithOptions<SplitOptionUnset, SplitOptionTrim, int>(source, charSeparators, count, destination, null, MemorySplitResultProcessor),
+                    (true, false) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset, int>(source, charSeparators, count, destination, null, MemorySplitResultProcessor),
+                    (false, false) => SplitWithOptions<SplitOptionUnset, SplitOptionUnset, int>(source, charSeparators, count, destination, null, MemorySplitResultProcessor)
+                };
+            }
+            else
+            {
+                return (removeEmptyEntries, trimEntry) switch
+                {
+                    (true, true) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionTrim, int>(source, singleSeparator, stringSeparators, count, destination, null, MemorySplitResultProcessor),
+                    (false, true) => SplitWithOptions<SplitOptionUnset, SplitOptionTrim, int>(source, singleSeparator, stringSeparators, count, destination, null, MemorySplitResultProcessor),
+                    (true, false) => SplitWithOptions<SplitOptionRemoveEmpty, SplitOptionUnset, int>(source, singleSeparator, stringSeparators, count, destination, null, MemorySplitResultProcessor),
+                    (false, false) => SplitWithOptions<SplitOptionUnset, SplitOptionUnset, int>(source, singleSeparator, stringSeparators, count, destination, null, MemorySplitResultProcessor)
+                };
+            }
+        }*/
+
+        //private string[] SplitWithOptions<TRemoveEmpty, TTrim>(ReadOnlySpan<char> source, string? separator, ReadOnlySpan<string?> separators, int count)
+        //    where TRemoveEmpty : ISplitOptionRemoveEmpty
+        //    where TTrim : ISplitOptionTrim
+        //{
+        //    if (count == 0) return Array.Empty<string>();
+        //    if (source.Length == 0) return TRemoveEmpty.IsSet ? Array.Empty<string>() : new string[] { "" };
+        //
+        //    Debug.Assert(count >= 1);
+        //    // TODO omezit count/buffersize/length?
+        //    Span</*ValueTuple<int, int>*/Range> buffer = stackalloc /*ValueTuple<int, int>*/Range[StackallocIntBufferSizeLimit];
+        //    var substrings = new ValueRangeListBuilder<TRemoveEmpty, TTrim>(source, count, buffer);
+        //
+        //    SplitWithOptions(source, separator, separators, ref substrings);
+        //    return CreateSplitArray(source, ref substrings);
+        //}
+
+        //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+        //private string[] CreateSplitArray<TRemoveEmpty, TTrim>(ReadOnlySpan<char> source, ref ValueRangeListBuilder<TRemoveEmpty, TTrim> substrings)
+        //    where TRemoveEmpty : ISplitOptionRemoveEmpty
+        //    where TTrim : ISplitOptionTrim
+        //{
+        //    string[] result;
+        //    var ranges = substrings.AsSpan();
+        //    if (ranges.Length == 1)
+        //    {
+        //        result = CreateSplitArrayOfThisAsSoleValue<TRemoveEmpty, TTrim>(this, ranges);
+        //    }
+        //    else
+        //    {
+        //        result = new string[ranges.Length];
+        //        int i = 0;
+        //        foreach (/*var (begin, end)*/var range in ranges)
+        //        {
+        //            result[i] = new string(source[/*begin..end*/range]);
+        //            i++;
+        //        }
+        //        substrings.Dispose();
+        //    }
+        //    return result;
+        //}
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SplitWithOptions<TRemoveEmpty, TTrim, THasCount>(ReadOnlySpan<char> source, ReadOnlySpan<char> separators, ref ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount> substrings, ref ValueRangeListBuilder builder)
+            where TRemoveEmpty : ISplitOptionRemoveEmpty
+            where TTrim : ISplitOptionTrim
+            where THasCount : ISplitOptionHasCount
+        {
+            substrings.AppendBegin(ref builder, 0);
+            if (substrings.Count == 1) goto END;
+
+            // Special-case no separators to mean any whitespace is a separator.
+            if (separators.Length == 0)
+            {
+                for (int i = 0; i < source.Length; i++)
+                {
+                    if (char.IsWhiteSpace(source[i]))
+                    {
+                        substrings.AppendEnd(ref builder, i);
+                        substrings.AppendBegin(ref builder, i + 1);
+                        if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                        //if (substrings.AppendBegin(ref builder, i + 1) && !TRemoveEmpty.IsSet) goto END;
+                        //sepListBuilder.Append(i);
+                    }
+                    else if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                }
+            }
+
+            // Special-case the common cases of 1, 2, and 3 separators, with manual comparisons against each separator.
+            else if (separators.Length <= 3)
+            {
+                char sep0, sep1, sep2;
+                sep0 = separators[0];
+                sep1 = separators.Length > 1 ? separators[1] : sep0;
+                sep2 = separators.Length > 2 ? separators[2] : sep1;
+                if (Vector128.IsHardwareAccelerated && source.Length >= Vector128<ushort>.Count * 2)
+                {
+                    SplitWithOptionsVectorized(source, ref substrings, sep0, sep1, sep2, ref builder);
+                    goto END;
+                }
+
+                for (int i = 0; i < source.Length; i++)
+                {
+                    char c = source[i];
+                    if (c == sep0 || c == sep1 || c == sep2)
+                    {
+                        substrings.AppendEnd(ref builder, i);
+                        substrings.AppendBegin(ref builder, i + 1);
+                        if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                        //if (substrings.AppendBegin(ref builder, i + 1) && !TRemoveEmpty.IsSet) goto END;
+                        //sepListBuilder.Append(i);
+                    }
+                    else if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                }
+            }
+
+            // Handle > 3 separators with a probabilistic map, ala IndexOfAny.
+            // This optimizes for chars being unlikely to match a separator.
+            else
+            {
+                unsafe
+                {
+                    var map = new ProbabilisticMap(separators);
+                    ref uint charMap = ref Unsafe.As<ProbabilisticMap, uint>(ref map);
+
+                    for (int i = 0; i < source.Length; i++)
+                    {
+                        if (ProbabilisticMap.Contains(ref charMap, separators, source[i]))
+                        {
+                            substrings.AppendEnd(ref builder, i);
+                            substrings.AppendBegin(ref builder, i + 1);
+                            if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                            //if (substrings.AppendBegin(ref builder, i + 1) && !TRemoveEmpty.IsSet) goto END;
+                            //sepListBuilder.Append(i);
+                        }
+                        else if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                    }
+                }
+            }
+        END:
+            substrings.AppendEnd(ref builder, source.Length);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SplitWithOptions<TRemoveEmpty, TTrim, THasCount>(ReadOnlySpan<char> source, ReadOnlySpan<char> singleSeparator, ReadOnlySpan<string?> separators, ref ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount> substrings, ref ValueRangeListBuilder builder)
+            where TRemoveEmpty : ISplitOptionRemoveEmpty
+            where TTrim : ISplitOptionTrim
+            where THasCount : ISplitOptionHasCount
+        {
+            Debug.Assert(singleSeparator.Length == 0 || separators.Length == 0);
+
+            substrings.AppendBegin(ref builder, 0);
+            if (substrings.Count == 1) goto END;
+
+            if (separators is [var singleSeparatorInSeparators])
+            {
+                singleSeparator = singleSeparatorInSeparators;
+                separators = default;
+            }
+
+            if (singleSeparator.Length != 0)
+            {
+                ReadOnlySpan<char> remaining = source;
+                int i = 0;
+                while (!remaining.IsEmpty)
+                {
+                    int index = remaining.IndexOf(singleSeparator);
+                    if (index < 0) goto END;
+
+                    i += index;
+                    if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && i > builder.LastBeginIndex()) goto END;
+
+                    substrings.AppendEnd(ref builder, i, singleSeparator.Length);
+                    substrings.AppendBegin(ref builder, i + singleSeparator.Length);
+                    if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                    //if (substrings.AppendBegin(ref builder, i + singleSeparator.Length) && !TRemoveEmpty.IsSet) goto END;
+                    //sepListBuilder.Append(i);
+
+                    i += singleSeparator.Length;
+                    remaining = remaining.Slice(index + singleSeparator.Length);
+                }
+            }
+            else if (separators.Length > 1)
+            {
+                for (int i = 0; i < source.Length; i++)
+                {
+                    if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && i > builder.LastBeginIndex()) goto END;
+                    for (int j = 0; j < separators.Length; j++)
+                    {
+                        string? separator = separators[j];
+                        if (IsNullOrEmpty(separator))
+                        {
+                            continue;
+                        }
+                        int currentSepLength = separator.Length;
+                        if (source[i] == separator[0] && currentSepLength <= source.Length - i)
+                        {
+                            if (currentSepLength == 1 || source.Slice(i, currentSepLength).SequenceEqual(separator))
+                            {
+                                substrings.AppendEnd(ref builder, i, currentSepLength);
+                                substrings.AppendBegin(ref builder, i + currentSepLength);
+                                if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) goto END;
+                                //if (substrings.AppendBegin(ref builder, i + currentSepLength) && !TRemoveEmpty.IsSet) goto END;
+                                //sepListBuilder.Append(i);
+                                //lengthListBuilder.Append(currentSepLength);
+                                i += currentSepLength - 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        END:
+            substrings.AppendEnd(ref builder, source.Length);
+        }
+
+        //private static string[] CreateSplitArrayOfThisAsSoleValue<TRemoveEmpty, TTrim>(/*ref ValueRangeListBuilder<TRemoveEmpty, TTrim> substrings, */string thisString, ReadOnlySpan</*(int Begin, int End)*/Range> ranges)
+        //    where TRemoveEmpty : ISplitOptionRemoveEmpty
+        //    where TTrim : ISplitOptionTrim
+        //{
+        //    if (!TRemoveEmpty.IsSet && !TTrim.IsSet)
+        //    {
+        //        return new string[] { thisString };
+        //    }
+        //    else
+        //    {
+        //        //var (begin, end) = substrings.LastRange;
+        //        /*var (begin, end)*/
+        //        var range = ranges[^1];
+        //        if (/*begin*/range.Start.Value == 0 && /*end*/range.End.Value == thisString.Length)
+        //        {
+        //            return new string[] { thisString };
+        //        }
+        //        else
+        //        {
+        //            return new string[] { thisString[/*begin..end*/range] };
+        //        }
+        //    }
+        //}
+        private static void SplitWithOptionsVectorized<TRemoveEmpty, TTrim, THasCount>(ReadOnlySpan<char> sourceSpan, ref ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount> substrings, char c, char c2, char c3, ref ValueRangeListBuilder builder)
+            where TRemoveEmpty : ISplitOptionRemoveEmpty
+            where TTrim : ISplitOptionTrim
+            where THasCount : ISplitOptionHasCount
+        {
+            // Redundant test so we won't prejit remainder of this method
+            // on platforms where it is not supported
+            if (!Vector128.IsHardwareAccelerated)
+            {
+                throw new PlatformNotSupportedException();
+            }
+
+            Debug.Assert(sourceSpan.Length >= Vector128<ushort>.Count);
+
+            nuint offset = 0;
+            nuint lengthToExamine = (uint)sourceSpan.Length;
+
+            ref ushort source = ref Unsafe.As<char, ushort>(ref MemoryMarshal.GetReference(sourceSpan));
+
+            Vector128<ushort> v1 = Vector128.Create((ushort)c);
+            Vector128<ushort> v2 = Vector128.Create((ushort)c2);
+            Vector128<ushort> v3 = Vector128.Create((ushort)c3);
+
+            do
+            {
+                Vector128<ushort> vector = Vector128.LoadUnsafe(ref source, offset);
+                Vector128<ushort> v1Eq = Vector128.Equals(vector, v1);
+                Vector128<ushort> v2Eq = Vector128.Equals(vector, v2);
+                Vector128<ushort> v3Eq = Vector128.Equals(vector, v3);
+                Vector128<byte> cmp = (v1Eq | v2Eq | v3Eq).AsByte();
+
+                if (cmp != Vector128<byte>.Zero)
+                {
+                    // Skip every other bit
+                    uint mask = cmp.ExtractMostSignificantBits() & 0x5555;
+                    do
+                    {
+                        uint bitPos = (uint)BitOperations.TrailingZeroCount(mask) / sizeof(char);
+                        int index = (int)(offset + bitPos);
+                        if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && index > builder.LastBeginIndex()) return;
+                        substrings.AppendEnd(ref builder, index);
+                        substrings.AppendBegin(ref builder, index + 1);
+                        if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) return;
+                        //if (substrings.AppendBegin(ref builder, index + 1) && !TRemoveEmpty.IsSet) return;
+                        //sepListBuilder.Append((int)(offset + bitPos));
+                        mask = BitOperations.ResetLowestSetBit(mask);
+                    } while (mask != 0);
+                }
+
+                offset += (nuint)Vector128<ushort>.Count;
+            } while (offset <= lengthToExamine - (nuint)Vector128<ushort>.Count);
+
+            while (offset < lengthToExamine)
+            {
+                char curr = (char)Unsafe.Add(ref source, offset);
+                if (curr == c || curr == c2 || curr == c3)
+                {
+                    int i = (int)offset;
+                    substrings.AppendEnd(ref builder, i);
+                    substrings.AppendBegin(ref builder, i + 1);
+                    if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) return;
+                    //if (substrings.AppendBegin(ref builder, i + 1) && !TRemoveEmpty.IsSet) return;
+                    //sepListBuilder.Append((int)offset);
+                }
+                else if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) return;
+                offset++;
+            }
+        }
 
         // This function may trim entries or omit empty entries
         private string[] SplitWithPostProcessing(ReadOnlySpan<int> sepList, ReadOnlySpan<int> lengthList, int defaultLength, int count, StringSplitOptions options)
@@ -2223,5 +2851,344 @@ namespace System
                 len == 0 ? string.Empty :
                 InternalSubString(start, len);
         }
+
+        private interface ISplitOption
+        {
+            public static abstract bool IsSet { get; }
+        }
+
+        private interface ISplitOptionRemoveEmpty : ISplitOption { }
+
+        private interface ISplitOptionTrim : ISplitOption { }
+
+        private interface ISplitOptionHasCount : ISplitOption { }
+
+        private struct SplitOptionUnset : ISplitOptionRemoveEmpty, ISplitOptionTrim, ISplitOptionHasCount
+        {
+            public static bool IsSet => false;
+        }
+
+        private struct SplitOptionRemoveEmpty : ISplitOptionRemoveEmpty
+        {
+            public static bool IsSet => true;
+        }
+
+        private struct SplitOptionTrim : ISplitOptionTrim
+        {
+            public static bool IsSet => true;
+        }
+
+        private struct SplitOptionHasCount : ISplitOptionHasCount
+        {
+            public static bool IsSet => true;
+        }
+
+        private ref struct ValueRangeListBuilder
+        {
+            private ValueListBuilder<(int Begin, int End)> _builder;
+            private ref (int Begin, int End) _last;
+
+            public ValueRangeListBuilder(Span<Range> initialSpan)
+            {
+                Span<(int Begin, int End)> span = MemoryMarshal.Cast<Range, (int Begin, int End)>(initialSpan);
+                _builder = new(span);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Append((int Begin, int End) range)
+            {
+                _builder.Append(range);
+                // Can't be inside this method else analyzer emits - error IDE0060: Parameter 'beginIndex' can be removed; its initial value is never used
+                SetLast();
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private void SetLast()
+            {
+                _last = ref _builder[^1];
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ReadOnlySpan<Range> GetRanges()
+            {
+                var span = _builder.AsSpan();
+                if (_last.End == -1) span = span[..^1];
+                return MemoryMarshal.Cast<(int Begin, int End), Range>(span);
+            }
+
+            public int Length => _builder.Length;
+
+            public ref (int Begin, int End) Last => ref _last;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public int LastBeginIndex()
+            {
+                return Last.Begin;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Dispose() => _builder.Dispose();
+        }
+
+        private readonly ref struct ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount>
+            where TRemoveEmpty : ISplitOptionRemoveEmpty
+            where TTrim : ISplitOptionTrim
+            where THasCount : ISplitOptionHasCount
+        {
+            private readonly ReadOnlySpan<char> _source;
+            private readonly int _count;
+
+            //private ValueListBuilder</*(int Begin, int End)*/Range> _builder;
+            //private ValueListBuilder<(int Begin, int End)> _builder2;
+            //private ref /*(int Begin, int End)*/Range _last;
+            //private ref (int Begin, int End) _last2;
+
+            public ValueRangeListBuilder(ReadOnlySpan<char> source, int count/*, ref ValueRangeListBuilder builder*/)
+            {
+                _source = source;
+                _count = count;
+                //_builder = builder;
+            }
+
+            //public ValueRangeListBuilder(ReadOnlySpan<char> source, int count, Span</*ValueTuple<int, int>*/Range> initialSpan)
+            //{
+            //    _source = source;
+            //    _count = count;
+            //    Span<(int Begin, int End)> span2 = MemoryMarshal.Cast<Range, (int Begin, int End)>(initialSpan);
+            //    //_builder = new(initialSpan);
+            //    _builder2 = new(span2);
+            //}
+
+            /*
+            private int Length => _last.End == -1
+                ? _builder.Length - 1
+                : _builder.Length;*/
+
+            //public int LastBeginIndex => _last.Start.Value;
+            //public int LastBeginIndex => _last2.Begin;
+            //public int LastBeginIndex => _last.Start.Value;
+            //public int LastBeginIndex => _builder.Last.Begin;
+            public int Count => _count;
+
+            //public bool IsLastSubstring
+            //{
+            //    get
+            //    {
+            //        //Debug.Assert(_builder2.Length <= _count, $"_builder.Length <= _count, {GetDump()}");
+            //        //return _builder2.Length == _count;
+            //        Debug.Assert(_builder.Length <= _count, $"_builder.Length <= _count, {GetDump()}");
+            //        return _builder.Length == _count;
+            //    }
+            //}
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public bool IsLastSubstring(ref ValueRangeListBuilder builder)
+            {
+                Debug.Assert(builder.Length <= _count, $"_builder.Length <= _count, {GetDump(ref builder)}");
+                if (!THasCount.IsSet) return false;
+                return builder.Length == _count;
+            }
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //public ReadOnlySpan</*(int Begin, int End)*/Range> AsSpan()
+            //{
+            //    var span = _builder2.AsSpan();
+            //    if (_last2.End == -1) span = span[..^1];
+            //    //if (_last.End.IsFromEnd) span = span[..^1];
+            //    return MemoryMarshal.Cast<(int Begin, int End), Range>(span);
+            //    //return span;
+            //}
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //public bool AppendBegin(int beginIndex)
+            //{
+            //    //if (TRemoveEmpty.IsSet && _builder2.Length > 0 && _last2.Begin >= beginIndex)
+            //    //if (_builder.Length > 0 && _last.Start.Value >= beginIndex)
+            //    if (TRemoveEmpty.IsSet && _builder.Length > 0 && _builder.Last.Begin >= beginIndex)
+            //    {
+            //        return IsLastSubstring;
+            //    }
+            //
+            //    Debug.Assert(_builder.Length == 0 || _builder.Last.Begin < beginIndex, $"_builder.Length == 0 || _last2.Begin < beginIndex, {GetDump()}");
+            //    Debug.Assert(_builder.Length == 0 || _builder.Last.End != -1, $"_builder.Length == 0 || _builder.Last.End.IsFromEnd, {GetDump()}");
+            //    //Debug.Assert(_builder2.Length == 0 || _last2.Begin < beginIndex, $"_builder2.Length == 0 || _last2.Begin < beginIndex, {GetDump()}");
+            //    //Debug.Assert(_builder2.Length == 0 || _builder2[^1].End != -1, $"_builder.Length == 0 || _builder[^1].End.IsFromEnd, {GetDump()}");
+            //    //Debug.Assert(_builder.Length == 0 || !_builder[^1].End.IsFromEnd, $"_builder.Length == 0 || _builder[^1].End.IsFromEnd, {GetDump()}");
+            //    //_builder2.Append(new(beginIndex, -1));
+            //    //_builder.Append(new Range(beginIndex, Index.End));
+            //    _builder.Append(new(beginIndex, -1));
+            //    // Can't be in this method else analyzer emits - error IDE0060: Parameter 'beginIndex' can be removed; its initial value is never used
+            //    //_last = ref _builder[^1];
+            //    //SetLast();
+            //    return IsLastSubstring;
+            //}
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void AppendBegin(ref ValueRangeListBuilder builder, int beginIndex)
+            {
+                if (TRemoveEmpty.IsSet && builder.Length > 0 && builder.Last.Begin >= beginIndex)
+                {
+                    return;
+                }
+
+                Debug.Assert(builder.Length == 0 || builder.Last.Begin < beginIndex, $"builder.Length == 0 || _last2.Begin < beginIndex, {GetDump(ref builder)}");
+                Debug.Assert(builder.Length == 0 || builder.Last.End != -1, $"builder.Length == 0 || builder.Last.End.IsFromEnd, {GetDump(ref builder)}");
+                builder.Append(new(beginIndex, -1));
+            }
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //private void SetLast()
+            //{
+            //    //_last = ref _builder[^1];
+            //    _last2 = ref _builder2[^1];
+            //}
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //public void AppendEnd(int endIndex) => AppendEnd(endIndex, 1);
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void AppendEnd(ref ValueRangeListBuilder builder, int endIndex) => AppendEnd(ref builder, endIndex, 1);
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //public void AppendEnd(int endIndex, int separatorLength)
+            //{
+            //    //Debug.Assert(_last.End.Value == (^1).Value, $"_last.End.Value == (^1).Value, {GetDump()}");
+            //    //Debug.Assert(_last2.End == -1, $"_last.End.Value == (^1).Value, {GetDump()}");
+            //    //Debug.Assert(_last.End.IsFromEnd, $"(_last.End.IsFromEnd, {GetDump()}");
+            //    Debug.Assert(_builder.Last.End == -1, $"_last.End.Value == (^1).Value, {GetDump()}");
+            //    Debug.Assert(endIndex <= _source.Length, $"endIndex <= _source.Length, {GetDump()}");
+            //
+            //    //if (TRemoveEmpty.IsSet && endIndex == _last.Start.Value)
+            //    //if (TRemoveEmpty.IsSet && endIndex == _last2.Begin)
+            //    //if (TRemoveEmpty.IsSet && endIndex == _last.Start.Value)
+            //    if (TRemoveEmpty.IsSet && endIndex == _builder.Last.Begin)
+            //    {
+            //        //_lastBegin = endIndex + 1;
+            //        //_builder[^1] = _lastBegin;
+            //
+            //        //_last = new(_last.Start.Value + 1, ^1);
+            //        //_last.Begin = endIndex + separatorLength;
+            //        //_last2.Begin = endIndex + separatorLength;
+            //        //_last = new Range(endIndex + separatorLength, Index.End);
+            //        _builder.Last.Begin = endIndex + separatorLength;
+            //        return;
+            //    }
+            //
+            //    if (TTrim.IsSet)
+            //    {
+            //        //ReadOnlySpan<char> span = _source[_last];
+            //        //ReadOnlySpan<char> span = _source[_last2.Begin..endIndex];
+            //        //ReadOnlySpan<char> span = _source[_last.Start..endIndex];
+            //        ReadOnlySpan<char> span = _source[_builder.Last.Begin..endIndex];
+            //        int length = span.Length;
+            //        span = span.TrimStart();
+            //        int trimmedFromBegin = length - span.Length;
+            //        if (trimmedFromBegin > 0)
+            //        {
+            //            //_lastBegin += trimmedFromBegin;
+            //            //_builder[^1] = _lastBegin;
+            //
+            //            //_last = new(_last.Start.Value + trimmedFromBegin, endIndex);
+            //            //_last.Begin += trimmedFromBegin;
+            //            //_last2.Begin += trimmedFromBegin;
+            //            //_last = new Range(_last.Start.Value + trimmedFromBegin, Index.End);
+            //            _builder.Last.Begin += trimmedFromBegin;
+            //        }
+            //        length = span.Length;
+            //        span = span.TrimEnd();
+            //        int trimmedFromEnd = length - span.Length;
+            //        endIndex -= trimmedFromEnd;
+            //
+            //        //if (TRemoveEmpty.IsSet && endIndex == _last.Start.Value)
+            //        //if (TRemoveEmpty.IsSet && endIndex == _last2.Begin)
+            //        //if (TRemoveEmpty.IsSet && endIndex == _last.Start.Value)
+            //        if (TRemoveEmpty.IsSet && endIndex == _builder.Last.Begin)
+            //        {
+            //            //_lastBegin = endIndex + 1;
+            //            //_builder[^1] = _lastBegin;
+            //
+            //            //_last = new(_last.Start, endIndex);
+            //            //_last.Begin = endIndex + separatorLength;
+            //            //_last2.Begin = endIndex + separatorLength;
+            //            //_last = new Range(endIndex + separatorLength, Index.End);
+            //            _builder.Last.Begin = endIndex + separatorLength;
+            //            return;
+            //        }
+            //    }
+            //
+            //    //_builder.Append(endIndex);
+            //    //_last.End = endIndex;
+            //
+            //    //_last = new(_last.Start, endIndex);
+            //    //_last.End = endIndex;
+            //    //_last2.End = endIndex;
+            //    //_last = new Range(_last.Start, endIndex);
+            //    _builder.Last.End = endIndex;
+            //}
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void AppendEnd(ref ValueRangeListBuilder builder, int endIndex, int separatorLength)
+            {
+                Debug.Assert(builder.Last.End == -1, $"_last.End.Value == (^1).Value, {GetDump(ref builder)}");
+                Debug.Assert(endIndex <= _source.Length, $"endIndex <= _source.Length, {GetDump(ref builder)}");
+
+                if (TRemoveEmpty.IsSet && endIndex == builder.Last.Begin)
+                {
+                    builder.Last.Begin = endIndex + separatorLength;
+                    return;
+                }
+
+                if (TTrim.IsSet)
+                {
+                    ReadOnlySpan<char> span = _source[builder.Last.Begin..endIndex];
+                    int length = span.Length;
+                    span = span.TrimStart();
+                    int trimmedFromBegin = length - span.Length;
+                    if (trimmedFromBegin > 0)
+                    {
+                        builder.Last.Begin += trimmedFromBegin;
+                    }
+                    length = span.Length;
+                    span = span.TrimEnd();
+                    int trimmedFromEnd = length - span.Length;
+                    endIndex -= trimmedFromEnd;
+
+                    if (TRemoveEmpty.IsSet && endIndex == builder.Last.Begin)
+                    {
+                        builder.Last.Begin = endIndex + separatorLength;
+                        return;
+                    }
+                }
+
+                builder.Last.End = endIndex;
+            }
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //public void Dispose() => _builder2.Dispose();
+            //public void Dispose() => _builder.Dispose();
+
+            private string GetDump(ref ValueRangeListBuilder builder)
+            {
+                var sb = new StringBuilder();
+                sb.Append("{ ");
+                sb.Append($"src: \"{_source}\"");
+                sb.Append($", cnt: {_count}");
+                sb.Append($", lst: ({builder.Last})");
+                sb.Append(", rng: [");
+                var span = builder.GetRanges();
+                //var span = _builder.AsSpan();
+                if (span.Length > 0)
+                {
+                    foreach (/*var (begin, end)*/var range in span)
+                    {
+                        sb.Append($"({range}), ");
+                    }
+                    sb.Length -= 2;
+                }
+                sb.Append("] }");
+                return sb.ToString();
+            }
+        }
     }
+
 }
