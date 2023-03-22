@@ -1741,8 +1741,8 @@ namespace System
             if (Length == 0) return removeEmptyEntries ? Array.Empty<string>() : new string[] { "" };
 
             Debug.Assert(count >= 1);
-            // TODO omezit count/buffersize/length?
-            Span<Range> buffer = stackalloc Range[StackallocIntBufferSizeLimit];
+            int bufferSize = GetSplitStackBufferSize(count);
+            Span<Range> buffer = stackalloc Range[bufferSize];
 
             var builder = new ValueRangeListBuilder(buffer);
             SplitByCharactersOrWhitespace(this, separators, count, ref builder, removeEmptyEntries, trimEntry);
@@ -1758,11 +1758,19 @@ namespace System
             if (Length == 0) return removeEmptyEntries ? Array.Empty<string>() : new string[] { "" };
 
             Debug.Assert(count >= 1);
-            // TODO omezit count/buffersize/length?
-            Span<Range> buffer = stackalloc Range[StackallocIntBufferSizeLimit];
+            int bufferSize = GetSplitStackBufferSize(count);
+            Span<Range> buffer = stackalloc Range[bufferSize];
             var builder = new ValueRangeListBuilder(buffer);
             SplitByStrings(this, separator, separators, count, ref builder, removeEmptyEntries, trimEntry);
             return CreateSplitArray(ref builder);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private int GetSplitStackBufferSize(int count)
+        {
+            int result = count < Length ? count : Length;
+            result = result >= StackallocIntBufferSizeLimit ? StackallocIntBufferSizeLimit : result + 1;
+            return result > 0 ? result : 1;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
