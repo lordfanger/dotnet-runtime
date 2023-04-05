@@ -1445,12 +1445,12 @@ namespace System
 
         public string[] Split(char separator, StringSplitOptions options = StringSplitOptions.None)
         {
-            return SplitInternal(new ReadOnlySpan<char>(in separator), int.MaxValue, options);
+            return SplitInternal2(new ReadOnlySpan<char>(in separator), int.MaxValue, options);
         }
 
         public string[] Split(char separator, int count, StringSplitOptions options = StringSplitOptions.None)
         {
-            return SplitInternal(new ReadOnlySpan<char>(in separator), count, options);
+            return SplitInternal2(new ReadOnlySpan<char>(in separator), count, options);
         }
 
         // Creates an array of strings by splitting this string at each
@@ -1464,7 +1464,7 @@ namespace System
         //
         public string[] Split(params char[]? separator)
         {
-            return SplitInternal(separator, int.MaxValue, StringSplitOptions.None);
+            return SplitInternal2(separator, int.MaxValue, StringSplitOptions.None);
         }
 
         // Creates an array of strings by splitting this string at each
@@ -1480,23 +1480,23 @@ namespace System
         //
         public string[] Split(char[]? separator, int count)
         {
-            return SplitInternal(separator, count, StringSplitOptions.None);
+            return SplitInternal2(separator, count, StringSplitOptions.None);
         }
 
         public string[] Split(char[]? separator, StringSplitOptions options)
         {
-            return SplitInternal(separator, int.MaxValue, options);
+            return SplitInternal2(separator, int.MaxValue, options);
         }
 
         public string[] Split(char[]? separator, int count, StringSplitOptions options)
         {
-            return SplitInternal(separator, count, options);
+            return SplitInternal2(separator, count, options);
         }
 
         //private static bool _useTodo;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private string[] SplitInternal(ReadOnlySpan<char> separators, int count, StringSplitOptions options)
+        private string[] SplitInternal2(ReadOnlySpan<char> separators, int count, StringSplitOptions options)
         {
             ArgumentOutOfRangeException.ThrowIfNegative(count);
             CheckStringSplitOptions(options);
@@ -1837,7 +1837,7 @@ namespace System
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SplitByCharactersOrWhitespace(ReadOnlySpan<char> source, ReadOnlySpan<char> separators, int count, ref ValueRangeListBuilder builder, bool removeEmptyEntries, bool trimEntry)
         {
-            if (count != int.MaxValue)
+            if (count <= source.Length)
             {
                 if (removeEmptyEntries)
                 {
@@ -1892,7 +1892,7 @@ namespace System
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void SplitByStrings(ReadOnlySpan<char> source, ReadOnlySpan<char> separator, ReadOnlySpan<string?> separators, int count, ref ValueRangeListBuilder builder, bool removeEmptyEntries, bool trimEntry)
         {
-            if (count != int.MaxValue)
+            if (count <= source.Length)
             {
                 if (removeEmptyEntries)
                 {
@@ -2191,7 +2191,7 @@ namespace System
                     if (index < 0) goto END;
 
                     i += index;
-                    if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && i > builder.LastBeginIndex()) goto END;
+                    if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && i > substrings.LastBeginIndex()) goto END;
 
                     substrings.AppendEnd(ref builder, i, singleSeparator.Length);
                     substrings.AppendBegin(ref builder, i + singleSeparator.Length);
@@ -2207,7 +2207,7 @@ namespace System
             {
                 for (int i = 0; i < source.Length; i++)
                 {
-                    if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && i > builder.LastBeginIndex()) goto END;
+                    if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && i > substrings.LastBeginIndex()) goto END;
                     for (int j = 0; j < separators.Length; j++)
                     {
                         string? separator = separators[j];
@@ -2299,7 +2299,7 @@ namespace System
                     {
                         uint bitPos = (uint)BitOperations.TrailingZeroCount(mask) / sizeof(char);
                         int index = (int)(offset + bitPos);
-                        if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && index > builder.LastBeginIndex()) return;
+                        if (THasCount.IsSet && TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder) && index > substrings.LastBeginIndex()) return;
                         substrings.AppendEnd(ref builder, index);
                         substrings.AppendBegin(ref builder, index + 1);
                         if (THasCount.IsSet && !TRemoveEmpty.IsSet && substrings.IsLastSubstring(ref builder)) return;
@@ -2893,58 +2893,65 @@ namespace System
 
         private ref struct ValueRangeListBuilder
         {
-            private ValueListBuilder<(int Begin, int End)> _builder;
-            private ref (int Begin, int End) _last;
+            //private ValueListBuilder<(int Begin, int End)> _builder;
+            private ValueListBuilder<Range> _ranges;
+            //private ref (int Begin, int End) _last;
 
             public ValueRangeListBuilder(Span<Range> initialSpan)
             {
-                Span<(int Begin, int End)> span = MemoryMarshal.Cast<Range, (int Begin, int End)>(initialSpan);
-                _builder = new(span);
+                //Span<(int Begin, int End)> span = MemoryMarshal.Cast<Range, (int Begin, int End)>(initialSpan);
+                //_builder = new(span);
+                _ranges = new(initialSpan);
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void Append((int Begin, int End) range)
             {
-                _builder.Append(range);
+                //_builder.Append(range);
+                _ranges.Append(range.Begin..range.End);
                 // Can't be inside this method else analyzer emits - error IDE0060: Parameter 'beginIndex' can be removed; its initial value is never used
-                SetLast();
+                //SetLast();
             }
 
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            private void SetLast()
-            {
-                _last = ref _builder[^1];
-            }
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //private void SetLast()
+            //{
+            //    _last = ref _builder[^1];
+            //}
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public ReadOnlySpan<Range> GetRanges()
             {
-                var span = _builder.AsSpan();
-                if (_last.End == -1) span = span[..^1];
-                return MemoryMarshal.Cast<(int Begin, int End), Range>(span);
+                //var span = _builder.AsSpan();
+                //if (_last.End == -1) span = span[..^1];
+                //return MemoryMarshal.Cast<(int Begin, int End), Range>(span);
+                return _ranges.AsSpan();
             }
 
-            public int Length => _builder.Length;
+            //public int Length => _builder.Length;
+            public int Length => _ranges.Length;
 
-            public ref (int Begin, int End) Last => ref _last;
+            //public ref (int Begin, int End) Last => ref _last;
+
+            //[MethodImpl(MethodImplOptions.AggressiveInlining)]
+            //public int LastBeginIndex()
+            //{
+            //    return Last.Begin;
+            //}
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public int LastBeginIndex()
-            {
-                return Last.Begin;
-            }
-
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public void Dispose() => _builder.Dispose();
+            //public void Dispose() => _builder.Dispose();
+            public void Dispose() => _ranges.Dispose();
         }
 
-        private readonly ref struct ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount>
+        private ref struct ValueRangeListBuilder<TRemoveEmpty, TTrim, THasCount>
             where TRemoveEmpty : ISplitOptionRemoveEmpty
             where TTrim : ISplitOptionTrim
             where THasCount : ISplitOptionHasCount
         {
             private readonly ReadOnlySpan<char> _source;
             private readonly int _count;
+            private (int Begin, int End) _last;
 
             //private ValueListBuilder</*(int Begin, int End)*/Range> _builder;
             //private ValueListBuilder<(int Begin, int End)> _builder2;
@@ -2972,6 +2979,12 @@ namespace System
                 ? _builder.Length - 1
                 : _builder.Length;*/
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public int LastBeginIndex()
+            {
+                return _last.Begin;
+            }
+
             //public int LastBeginIndex => _last.Start.Value;
             //public int LastBeginIndex => _last2.Begin;
             //public int LastBeginIndex => _last.Start.Value;
@@ -2992,9 +3005,9 @@ namespace System
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public bool IsLastSubstring(ref ValueRangeListBuilder builder)
             {
-                Debug.Assert(builder.Length <= _count, $"_builder.Length <= _count, {GetDump(ref builder)}");
+                Debug.Assert(builder.Length < _count, $"_builder.Length <= _count, {GetDump(ref builder)}");
                 if (!THasCount.IsSet) return false;
-                return builder.Length == _count;
+                return builder.Length == _count - 1;
             }
 
             //[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -3034,14 +3047,19 @@ namespace System
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void AppendBegin(ref ValueRangeListBuilder builder, int beginIndex)
             {
-                if (TRemoveEmpty.IsSet && builder.Length > 0 && builder.Last.Begin >= beginIndex)
+                //if (TRemoveEmpty.IsSet && builder.Length > 0 && builder.Last.Begin >= beginIndex)
+                if (TRemoveEmpty.IsSet && builder.Length > 0 && _last.Begin >= beginIndex)
                 {
                     return;
                 }
 
-                Debug.Assert(builder.Length == 0 || builder.Last.Begin < beginIndex, $"builder.Length == 0 || _last2.Begin < beginIndex, {GetDump(ref builder)}");
-                Debug.Assert(builder.Length == 0 || builder.Last.End != -1, $"builder.Length == 0 || builder.Last.End.IsFromEnd, {GetDump(ref builder)}");
-                builder.Append(new(beginIndex, -1));
+                //Debug.Assert(builder.Length == 0 || builder.Last.Begin < beginIndex, $"builder.Length == 0 || _last2.Begin < beginIndex, {GetDump(ref builder)}");
+                Debug.Assert(builder.Length == 0 || _last.Begin < beginIndex, $"builder.Length == 0 || _last.Begin < beginIndex, {GetDump(ref builder)}");
+                //Debug.Assert(builder.Length == 0 || builder.Last.End != -1, $"builder.Length == 0 || builder.Last.End.IsFromEnd, {GetDump(ref builder)}");
+                Debug.Assert(builder.Length == 0 || _last.End != -1, $"builder.Length == 0 || builder.Last.End.IsFromEnd, {GetDump(ref builder)}");
+
+                _last = new(beginIndex, -1);
+                //builder.Append(new(beginIndex, -1));
             }
 
             //[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -3137,38 +3155,47 @@ namespace System
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void AppendEnd(ref ValueRangeListBuilder builder, int endIndex, int separatorLength)
             {
-                Debug.Assert(builder.Last.End == -1, $"_last.End.Value == (^1).Value, {GetDump(ref builder)}");
+                //Debug.Assert(builder.Last.End == -1, $"_last.End.Value == (^1).Value, {GetDump(ref builder)}");
+                Debug.Assert(_last.End == -1, $"_last.End == -1, {GetDump(ref builder)}");
                 Debug.Assert(endIndex <= _source.Length, $"endIndex <= _source.Length, {GetDump(ref builder)}");
 
-                if (TRemoveEmpty.IsSet && endIndex == builder.Last.Begin)
+                //if (TRemoveEmpty.IsSet && endIndex == builder.Last.Begin)
+                if (TRemoveEmpty.IsSet && endIndex == _last.Begin)
                 {
-                    builder.Last.Begin = endIndex + separatorLength;
+                    //builder.Last.Begin = endIndex + separatorLength;
+                    _last.Begin = endIndex + separatorLength;
                     return;
                 }
 
                 if (TTrim.IsSet)
                 {
-                    ReadOnlySpan<char> span = _source[builder.Last.Begin..endIndex];
+                    //ReadOnlySpan<char> span = _source[builder.Last.Begin..endIndex];
+                    ReadOnlySpan<char> span = _source[_last.Begin..endIndex];
                     int length = span.Length;
                     span = span.TrimStart();
                     int trimmedFromBegin = length - span.Length;
                     if (trimmedFromBegin > 0)
                     {
-                        builder.Last.Begin += trimmedFromBegin;
+                        //builder.Last.Begin += trimmedFromBegin;
+                        _last.Begin += trimmedFromBegin;
                     }
                     length = span.Length;
                     span = span.TrimEnd();
                     int trimmedFromEnd = length - span.Length;
                     endIndex -= trimmedFromEnd;
 
-                    if (TRemoveEmpty.IsSet && endIndex == builder.Last.Begin)
+                    //if (TRemoveEmpty.IsSet && endIndex == builder.Last.Begin)
+                    if (TRemoveEmpty.IsSet && endIndex == _last.Begin)
                     {
-                        builder.Last.Begin = endIndex + separatorLength;
+                        //builder.Last.Begin = endIndex + separatorLength;
+                        _last.Begin = endIndex + separatorLength;
                         return;
                     }
                 }
 
-                builder.Last.End = endIndex;
+                //builder.Last.End = endIndex;
+                _last.End = endIndex;
+                builder.Append(_last);
             }
 
             //[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -3181,7 +3208,7 @@ namespace System
                 sb.Append("{ ");
                 sb.Append($"src: \"{_source}\"");
                 sb.Append($", cnt: {_count}");
-                sb.Append($", lst: ({builder.Last})");
+                sb.Append($", lst: ({_last})");
                 sb.Append(", rng: [");
                 var span = builder.GetRanges();
                 //var span = _builder.AsSpan();
